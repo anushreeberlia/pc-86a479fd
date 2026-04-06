@@ -11,7 +11,7 @@
         <header>
             <h1>🎾 SF Tennis Bot</h1>
             <p>Automated reservation system for Alice Marble Tennis Courts</p>
-            <div class="database-status" id="databaseStatus"></div>
+            <div class="storage-status">In-Memory Storage</div>
         </header>
 
         <div class="grid">
@@ -65,56 +65,38 @@
 
         <!-- Setup Instructions -->
         <div class="card setup-instructions">
-            <h2>⚙️ Setup Instructions</h2>
-            <div class="setup-tabs">
-                <button class="tab-button active" onclick="showTab('basic')">Basic Setup</button>
-                <button class="tab-button" onclick="showTab('database')">Database Setup (Optional)</button>
-            </div>
-            
-            <div id="basic-tab" class="tab-content active">
-                <h3>Quick Start</h3>
-                <ol>
-                    <li><strong>Enter Credentials:</strong> Add your SF Rec & Parks account username and password above</li>
-                    <li><strong>Start Bot:</strong> Click "Start Bot" to begin monitoring every 5 minutes</li>
-                    <li><strong>Manual Test:</strong> Use "Try Now" to test the reservation system immediately</li>
-                </ol>
-                <div class="info-box">
-                    <p><strong>Note:</strong> The bot is currently running with in-memory storage. Your data will be lost when the server restarts. For persistent storage, set up Supabase using the Database Setup tab.</p>
+            <h2>⚙️ Quick Start Guide</h2>
+            <div class="setup-steps">
+                <div class="step">
+                    <h3>1. Enter Your Credentials</h3>
+                    <p>Add your SF Rec & Parks account username and password in the form above. Your credentials are stored securely in memory.</p>
+                </div>
+                
+                <div class="step">
+                    <h3>2. Start the Bot</h3>
+                    <p>Click "Start Bot" to begin automatic monitoring. The bot will check for Alice Marble court availability every 5 minutes.</p>
+                </div>
+                
+                <div class="step">
+                    <h3>3. Monitor Activity</h3>
+                    <p>Use "Try Now" to test immediately, or watch the Live Activity Log for automatic attempts. The bot will log all reservation attempts.</p>
                 </div>
             </div>
             
-            <div id="database-tab" class="tab-content">
-                <h3>Supabase Database Setup (Optional)</h3>
-                <ol>
-                    <li><strong>Create Supabase Project:</strong> Sign up at <a href="https://supabase.com" target="_blank">supabase.com</a></li>
-                    <li><strong>Get API Keys:</strong> Copy your project URL and anon key from Settings > API</li>
-                    <li><strong>Set Environment Variables:</strong>
-                        <pre><code>SUPABASE_URL=your_project_url
-SUPABASE_ANON_KEY=your_anon_key</code></pre>
-                    </li>
-                    <li><strong>Create Tables:</strong> Run this SQL in the Supabase SQL editor:
-                        <details>
-                            <summary>Click to view SQL commands</summary>
-                            <pre><code>-- User credentials table
-CREATE TABLE user_credentials (
-    id INTEGER PRIMARY KEY,
-    username TEXT NOT NULL,
-    password TEXT NOT NULL,
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-
--- Reservation logs table
-CREATE TABLE reservation_logs (
-    id SERIAL PRIMARY KEY,
-    message TEXT NOT NULL,
-    success BOOLEAN DEFAULT FALSE,
-    details TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
-);</code></pre>
-                        </details>
-                    </li>
-                    <li><strong>Restart:</strong> Restart your application to use Supabase storage</li>
-                </ol>
+            <div class="info-box">
+                <p><strong>Note:</strong> This bot uses in-memory storage. Your data will be lost when the server restarts, but the bot will continue working as long as it's running.</p>
+            </div>
+            
+            <div class="features">
+                <h3>Features</h3>
+                <ul>
+                    <li>✅ Automatic monitoring every 5 minutes</li>
+                    <li>✅ Focuses specifically on Alice Marble courts</li>
+                    <li>✅ Secure credential handling</li>
+                    <li>✅ Real-time activity logging</li>
+                    <li>✅ Manual reservation testing</li>
+                    <li>✅ Responsive web interface</li>
+                </ul>
             </div>
         </div>
     </div>

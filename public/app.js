@@ -1,7 +1,6 @@
 // Global state
 let isPolling = false;
 let pollingInterval;
-let databaseType = 'unknown';
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', function() {
@@ -26,37 +25,6 @@ function stopPolling() {
         clearInterval(pollingInterval);
         isPolling = false;
     }
-}
-
-// Database status update
-function updateDatabaseStatus(type) {
-    const statusElement = document.getElementById('databaseStatus');
-    databaseType = type;
-    
-    if (type === 'Supabase') {
-        statusElement.textContent = 'Connected to Supabase';
-        statusElement.className = 'database-status supabase';
-    } else {
-        statusElement.textContent = 'In-Memory Storage';
-        statusElement.className = 'database-status memory';
-    }
-}
-
-// Tab functionality
-function showTab(tabName) {
-    // Hide all tab contents
-    document.querySelectorAll('.tab-content').forEach(tab => {
-        tab.classList.remove('active');
-    });
-    
-    // Remove active class from all tab buttons
-    document.querySelectorAll('.tab-button').forEach(button => {
-        button.classList.remove('active');
-    });
-    
-    // Show selected tab
-    document.getElementById(`${tabName}-tab`).classList.add('active');
-    event.target.classList.add('active');
 }
 
 // Credentials Management
@@ -186,9 +154,6 @@ async function updateBotStatus() {
     try {
         const response = await fetch('/api/status');
         const status = await response.json();
-        
-        // Update database status
-        updateDatabaseStatus(status.database);
         
         // Update status indicator
         const indicator = document.getElementById('statusIndicator');

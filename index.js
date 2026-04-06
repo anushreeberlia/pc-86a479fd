@@ -8,25 +8,12 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Initialize Supabase client only if environment variables are provided
-let supabase = null;
-if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
-  const { createClient } = require('@supabase/supabase-js');
-  supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_ANON_KEY
-  );
-  console.log('✅ Supabase client initialized');
-} else {
-  console.log('⚠️  Supabase not configured - using in-memory storage');
-}
-
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// In-memory storage when Supabase is not available
-let inMemoryStorage = {
+// In-memory storage
+let storage = {
   credentials: null,
   reservationLogs: []
 };
@@ -41,12 +28,14 @@ let botStatus = {
 
 let cronJob = null;
 
+console.log('✅ SF Tennis Bot initialized with in-memory storage');
+
 // Health check
 app.get('/', (req, res) => {
   res.json({ 
     status: 'SF Tennis Bot is running', 
     timestamp: new Date().toISOString(),
-    database: supabase ? 'Supabase' : 'In-Memory',
+    storage: 'In-Memory',
     version: '1.0.0'
   });
 });
@@ -55,29 +44,14 @@ app.get('/', (req, res) => {
 app.get('/api/status', (req, res) => {
   res.json({
     ...botStatus,
-    database: supabase ? 'Supabase' : 'In-Memory'
+    storage: 'In-Memory'
   });
 });
 
 // Get saved credentials
-app.get('/api/credentials', async (req, res) => {
+app.get('/api/credentials', (req, res) => {
   try {
-    let credentials = null;
-    
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('user_credentials')
-        .select('*')
-        .single();
-      
-      if (error && error.code !== 'PGRST116') {
-        throw error;
-      }
-      
-      credentials = data;
-    } else {
-      credentials = inMemoryStorage.credentials;
-    }
+    const credentials = storage.credentials;
     
     res.json({ 
       hasCredentials: !!credentials,
@@ -91,7 +65,7 @@ app.get('/api/credentials', async (req, res) => {
 });
 
 // Save credentials
-app.post('/api/credentials', async (req, res) => {
+app.post('/api/credentials', (req, res) => {
   try {
     const { username, password } = req.body;
     
@@ -99,23 +73,12 @@ app.post('/api/credentials', async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
     
-    const credentialData = {
+    storage.credentials = {
       id: 1,
       username,
       password,
       updated_at: new Date().toISOString()
     };
-    
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('user_credentials')
-        .upsert(credentialData)
-        .select();
-      
-      if (error) throw error;
-    } else {
-      inMemoryStorage.credentials = credentialData;
-    }
     
     addLog('Credentials updated successfully');
     res.json({ success: true });
@@ -141,24 +104,11 @@ app.post('/api/bot/:action', (req, res) => {
 });
 
 // Get reservation logs
-app.get('/api/logs', async (req, res) => {
+app.get('/api/logs', (req, res) => {
   try {
-    let logs = [];
-    
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('reservation_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(100);
-      
-      if (error) throw error;
-      logs = data || [];
-    } else {
-      logs = [...inMemoryStorage.reservationLogs]
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-        .slice(0, 100);
-    }
+    const logs = [...storage.reservationLogs]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, 100);
     
     res.json(logs);
   } catch (error) {
@@ -197,8 +147,10 @@ function startBot() {
     return;
   }
   
-  // Check every 5 minutes - adjust as needed
-  cronJob = cron.schedule('*/5 * * * *', async () => {
+  const intervalMinutes = process.env.CHECK_INTERVAL_MINUTES || 5;
+  
+  // Check every X minutes - configurable via environment
+  cronJob = cron.schedule(`*/${intervalMinutes} * * * *`, async () => {
     botStatus.lastCheck = new Date().toISOString();
     addLog('Checking for available reservations...');
     
@@ -215,8 +167,8 @@ function startBot() {
   });
   
   botStatus.isRunning = true;
-  botStatus.nextCheck = 'Within 5 minutes';
-  addLog('Bot started - checking every 5 minutes for Alice Marble reservations');
+  botStatus.nextCheck = `Within ${intervalMinutes} minutes`;
+  addLog(`Bot started - checking every ${intervalMinutes} minutes for Alice Marble reservations`);
 }
 
 function stopBot() {
@@ -235,23 +187,10 @@ async function attemptReservation() {
   
   try {
     // Get credentials
-    let credentials = null;
+    const credentials = storage.credentials;
     
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('user_credentials')
-        .select('*')
-        .single();
-      
-      if (error || !data) {
-        throw new Error('No credentials found. Please save your login details first.');
-      }
-      credentials = data;
-    } else {
-      credentials = inMemoryStorage.credentials;
-      if (!credentials) {
-        throw new Error('No credentials found. Please save your login details first.');
-      }
+    if (!credentials) {
+      throw new Error('No credentials found. Please save your login details first.');
     }
     
     // Launch browser with better configuration for deployment
@@ -263,7 +202,10 @@ async function attemptReservation() {
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--disable-extensions',
-        '--no-first-run'
+        '--no-first-run',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding'
       ]
     });
     
@@ -368,11 +310,13 @@ async function attemptReservation() {
           let usernameField = null;
           for (const selector of usernameSelectors) {
             usernameField = await page.$(selector);
-            if (usernameField) break;
+            if (usernameField) {
+              await page.type(selector, credentials.username);
+              break;
+            }
           }
           
           if (usernameField) {
-            await page.type(usernameSelectors.find(sel => page.$(sel)), credentials.username);
             await page.type('input[type="password"]', credentials.password);
             
             const loginButton = await page.$('button[type="submit"], input[type="submit"]') ||
@@ -450,6 +394,7 @@ async function attemptReservation() {
 
 async function logReservationAttempt(message, success, details = '') {
   const logEntry = {
+    id: storage.reservationLogs.length + 1,
     message,
     success,
     details,
@@ -457,19 +402,11 @@ async function logReservationAttempt(message, success, details = '') {
   };
   
   try {
-    if (supabase) {
-      await supabase
-        .from('reservation_logs')
-        .insert(logEntry);
-    } else {
-      // Add ID for in-memory storage
-      logEntry.id = inMemoryStorage.reservationLogs.length + 1;
-      inMemoryStorage.reservationLogs.push(logEntry);
-      
-      // Keep only last 1000 entries in memory
-      if (inMemoryStorage.reservationLogs.length > 1000) {
-        inMemoryStorage.reservationLogs = inMemoryStorage.reservationLogs.slice(-1000);
-      }
+    storage.reservationLogs.push(logEntry);
+    
+    // Keep only last 1000 entries in memory
+    if (storage.reservationLogs.length > 1000) {
+      storage.reservationLogs = storage.reservationLogs.slice(-1000);
     }
   } catch (error) {
     console.error('Error logging reservation attempt:', error);
@@ -491,6 +428,6 @@ process.on('SIGINT', () => {
 
 app.listen(PORT, () => {
   console.log(`🎾 SF Tennis Bot running on port ${PORT}`);
-  console.log(`📊 Database: ${supabase ? 'Supabase' : 'In-Memory Storage'}`);
-  addLog(`Server started on port ${PORT} with ${supabase ? 'Supabase' : 'in-memory'} storage`);
+  console.log(`📊 Storage: In-Memory`);
+  addLog(`Server started on port ${PORT} with in-memory storage`);
 });
