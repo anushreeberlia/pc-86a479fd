@@ -1,6 +1,7 @@
 // Global state
 let isPolling = false;
 let pollingInterval;
+let databaseType = 'unknown';
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', function() {
@@ -27,6 +28,37 @@ function stopPolling() {
     }
 }
 
+// Database status update
+function updateDatabaseStatus(type) {
+    const statusElement = document.getElementById('databaseStatus');
+    databaseType = type;
+    
+    if (type === 'Supabase') {
+        statusElement.textContent = 'Connected to Supabase';
+        statusElement.className = 'database-status supabase';
+    } else {
+        statusElement.textContent = 'In-Memory Storage';
+        statusElement.className = 'database-status memory';
+    }
+}
+
+// Tab functionality
+function showTab(tabName) {
+    // Hide all tab contents
+    document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    
+    // Remove active class from all tab buttons
+    document.querySelectorAll('.tab-button').forEach(button => {
+        button.classList.remove('active');
+    });
+    
+    // Show selected tab
+    document.getElementById(`${tabName}-tab`).classList.add('active');
+    event.target.classList.add('active');
+}
+
 // Credentials Management
 async function loadCredentials() {
     try {
@@ -45,7 +77,7 @@ async function loadCredentials() {
 }
 
 async function saveCredentials() {
-    const username = document.getElementById('username').value;
+    const username = document.getElementById('username').value.trim();
     const password = document.getElementById('password').value;
     
     if (!username || !password) {
@@ -64,9 +96,10 @@ async function saveCredentials() {
         
         const data = await response.json();
         
-        if (data.success) {
+        if (response.ok && data.success) {
             showStatus('credentialsStatus', 'Credentials saved successfully! 🎉', 'success');
             document.getElementById('password').value = ''; // Clear password field
+            addLogEntry('Credentials updated', 'success');
         } else {
             throw new Error(data.error || 'Failed to save credentials');
         }
@@ -82,11 +115,11 @@ async function startBot() {
         const response = await fetch('/api/bot/start', { method: 'POST' });
         const data = await response.json();
         
-        if (data.success) {
+        if (response.ok && data.success) {
             updateBotStatus();
             addLogEntry('Bot started successfully', 'success');
         } else {
-            throw new Error(data.message || 'Failed to start bot');
+            throw new Error(data.error || data.message || 'Failed to start bot');
         }
     } catch (error) {
         console.error('Error starting bot:', error);
@@ -99,11 +132,11 @@ async function stopBot() {
         const response = await fetch('/api/bot/stop', { method: 'POST' });
         const data = await response.json();
         
-        if (data.success) {
+        if (response.ok && data.success) {
             updateBotStatus();
             addLogEntry('Bot stopped', 'success');
         } else {
-            throw new Error(data.message || 'Failed to stop bot');
+            throw new Error(data.error || data.message || 'Failed to stop bot');
         }
     } catch (error) {
         console.error('Error stopping bot:', error);
@@ -114,6 +147,7 @@ async function stopBot() {
 // Manual reservation attempt
 async function manualReservation() {
     const button = event.target;
+    const originalText = button.textContent;
     button.disabled = true;
     button.textContent = 'Checking...';
     
@@ -123,23 +157,27 @@ async function manualReservation() {
         const response = await fetch('/api/reserve', { method: 'POST' });
         const data = await response.json();
         
-        if (data.success) {
-            addLogEntry(`SUCCESS: ${data.message}`, 'success');
+        if (response.ok) {
+            if (data.success) {
+                addLogEntry(`SUCCESS: ${data.message}`, 'success');
+            } else {
+                addLogEntry(`Result: ${data.message}`, 'info');
+            }
         } else {
-            addLogEntry(`Result: ${data.message}`, 'info');
+            throw new Error(data.error || 'Reservation attempt failed');
         }
         
         // Refresh history after manual attempt
         setTimeout(() => {
             loadReservationHistory();
-        }, 1000);
+        }, 2000);
         
     } catch (error) {
         console.error('Error with manual reservation:', error);
         addLogEntry(`Error: ${error.message}`, 'error');
     } finally {
         button.disabled = false;
-        button.textContent = 'Try Now';
+        button.textContent = originalText;
     }
 }
 
@@ -148,6 +186,9 @@ async function updateBotStatus() {
     try {
         const response = await fetch('/api/status');
         const status = await response.json();
+        
+        // Update database status
+        updateDatabaseStatus(status.database);
         
         // Update status indicator
         const indicator = document.getElementById('statusIndicator');
@@ -179,6 +220,7 @@ async function updateBotStatus() {
         
     } catch (error) {
         console.error('Error updating bot status:', error);
+        // Don't show error to user for status updates to avoid spam
     }
 }
 
@@ -193,13 +235,22 @@ function updateLiveLogs(logs) {
     
     container.innerHTML = logs.map(log => {
         const time = formatTimestamp(log.timestamp);
-        const className = log.message.toLowerCase().includes('success') ? 'success' : 
-                         log.message.toLowerCase().includes('error') ? 'error' : '';
-        return `<div class="log-entry ${className}">[${time}] ${log.message}</div>`;
+        const className = getLogEntryClass(log.message);
+        return `<div class="log-entry ${className}">[${time}] ${escapeHtml(log.message)}</div>`;
     }).join('');
     
     // Auto-scroll to top (newest entries)
     container.scrollTop = 0;
+}
+
+function getLogEntryClass(message) {
+    const lowerMessage = message.toLowerCase();
+    if (lowerMessage.includes('success') || lowerMessage.includes('✅')) {
+        return 'success';
+    } else if (lowerMessage.includes('error') || lowerMessage.includes('failed')) {
+        return 'error';
+    }
+    return '';
 }
 
 function addLogEntry(message, type = 'info') {
@@ -232,6 +283,10 @@ async function loadReservationHistory() {
         
         const container = document.getElementById('reservationHistory');
         
+        if (!response.ok) {
+            throw new Error(logs.error || 'Failed to load history');
+        }
+        
         if (!logs || logs.length === 0) {
             container.innerHTML = '<div class="history-item">No reservation attempts yet</div>';
             return;
@@ -244,8 +299,8 @@ async function loadReservationHistory() {
             return `
                 <div class="history-item ${className}">
                     <div class="history-time">${time}</div>
-                    <div class="history-message">${log.message}</div>
-                    ${log.details ? `<div class="history-details">${log.details}</div>` : ''}
+                    <div class="history-message">${escapeHtml(log.message)}</div>
+                    ${log.details ? `<div class="history-details">${escapeHtml(log.details)}</div>` : ''}
                 </div>
             `;
         }).join('');
@@ -253,7 +308,7 @@ async function loadReservationHistory() {
     } catch (error) {
         console.error('Error loading reservation history:', error);
         document.getElementById('reservationHistory').innerHTML = 
-            '<div class="history-item failed">Error loading history</div>';
+            `<div class="history-item failed">Error loading history: ${error.message}</div>`;
     }
 }
 
@@ -274,9 +329,15 @@ function formatTimestamp(timestamp) {
     });
 }
 
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 function showStatus(elementId, message, type) {
     const statusDiv = document.getElementById(elementId);
-    statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+    statusDiv.innerHTML = `<div class="status ${type}">${escapeHtml(message)}</div>`;
     
     // Auto-clear success messages after 5 seconds
     if (type === 'success') {
@@ -285,6 +346,12 @@ function showStatus(elementId, message, type) {
         }, 5000);
     }
 }
+
+// Error handling for fetch requests
+window.addEventListener('unhandledrejection', event => {
+    console.error('Unhandled promise rejection:', event.reason);
+    addLogEntry(`Unexpected error: ${event.reason}`, 'error');
+});
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', () => {

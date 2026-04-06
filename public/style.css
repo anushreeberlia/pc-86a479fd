@@ -9,6 +9,7 @@
     --border: #e2e8f0;
     --text: #1e293b;
     --text-secondary: #64748b;
+    --info: #0ea5e9;
 }
 
 * {
@@ -44,6 +45,26 @@ header h1 {
 header p {
     color: var(--text-secondary);
     font-size: 1.1rem;
+    margin-bottom: 10px;
+}
+
+.database-status {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.database-status.supabase {
+    background: #d1fae5;
+    color: var(--success);
+}
+
+.database-status.memory {
+    background: #fef3c7;
+    color: var(--warning);
 }
 
 .grid {
@@ -119,7 +140,7 @@ button {
     color: white;
 }
 
-button:hover {
+button:hover:not(:disabled) {
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
@@ -262,17 +283,72 @@ button:disabled {
     border: 1px solid #fecaca;
 }
 
+.status.warning {
+    background: #fef3c7;
+    color: var(--warning);
+    border: 1px solid #fde68a;
+}
+
 /* Setup Instructions */
 .setup-instructions {
     margin-top: 20px;
 }
 
-.setup-instructions ol {
+.setup-tabs {
+    display: flex;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.tab-button {
+    background: none;
+    border: none;
+    padding: 12px 20px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 2px solid transparent;
+    margin: 0;
+}
+
+.tab-button.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+
+.tab-button:hover {
+    color: var(--primary);
+    transform: none;
+    box-shadow: none;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.tab-content ol {
     margin-left: 20px;
 }
 
-.setup-instructions li {
+.tab-content li {
     margin-bottom: 12px;
+}
+
+.info-box {
+    background: #e0f2fe;
+    border: 1px solid #b3e5fc;
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 16px;
+}
+
+.info-box p {
+    margin: 0;
+    color: var(--info);
 }
 
 details {
@@ -295,6 +371,15 @@ pre {
     font-size: 12px;
 }
 
+a {
+    color: var(--primary);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .container {
@@ -311,5 +396,13 @@ pre {
     
     .card {
         padding: 16px;
+    }
+    
+    .setup-tabs {
+        flex-direction: column;
+    }
+    
+    .tab-button {
+        text-align: left;
     }
 }

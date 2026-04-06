@@ -1,7 +1,6 @@
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
 const puppeteer = require('puppeteer');
 const cron = require('node-cron');
 require('dotenv').config();
@@ -9,15 +8,28 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Supabase client
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+// Initialize Supabase client only if environment variables are provided
+let supabase = null;
+if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
+  const { createClient } = require('@supabase/supabase-js');
+  supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_ANON_KEY
+  );
+  console.log('✅ Supabase client initialized');
+} else {
+  console.log('⚠️  Supabase not configured - using in-memory storage');
+}
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
+
+// In-memory storage when Supabase is not available
+let inMemoryStorage = {
+  credentials: null,
+  reservationLogs: []
+};
 
 // Global state
 let botStatus = {
@@ -31,32 +43,49 @@ let cronJob = null;
 
 // Health check
 app.get('/', (req, res) => {
-  res.json({ status: 'SF Tennis Bot is running', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'SF Tennis Bot is running', 
+    timestamp: new Date().toISOString(),
+    database: supabase ? 'Supabase' : 'In-Memory',
+    version: '1.0.0'
+  });
 });
 
 // Get bot status
 app.get('/api/status', (req, res) => {
-  res.json(botStatus);
+  res.json({
+    ...botStatus,
+    database: supabase ? 'Supabase' : 'In-Memory'
+  });
 });
 
 // Get saved credentials
 app.get('/api/credentials', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('user_credentials')
-      .select('*')
-      .single();
+    let credentials = null;
     
-    if (error && error.code !== 'PGRST116') {
-      throw error;
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('user_credentials')
+        .select('*')
+        .single();
+      
+      if (error && error.code !== 'PGRST116') {
+        throw error;
+      }
+      
+      credentials = data;
+    } else {
+      credentials = inMemoryStorage.credentials;
     }
     
     res.json({ 
-      hasCredentials: !!data,
-      username: data?.username || '',
+      hasCredentials: !!credentials,
+      username: credentials?.username || '',
       // Don't send password back for security
     });
   } catch (error) {
+    addLog(`Error loading credentials: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -66,17 +95,27 @@ app.post('/api/credentials', async (req, res) => {
   try {
     const { username, password } = req.body;
     
-    const { data, error } = await supabase
-      .from('user_credentials')
-      .upsert({ 
-        id: 1, // Single user system
-        username,
-        password,
-        updated_at: new Date().toISOString()
-      })
-      .select();
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
     
-    if (error) throw error;
+    const credentialData = {
+      id: 1,
+      username,
+      password,
+      updated_at: new Date().toISOString()
+    };
+    
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('user_credentials')
+        .upsert(credentialData)
+        .select();
+      
+      if (error) throw error;
+    } else {
+      inMemoryStorage.credentials = credentialData;
+    }
     
     addLog('Credentials updated successfully');
     res.json({ success: true });
@@ -104,16 +143,26 @@ app.post('/api/bot/:action', (req, res) => {
 // Get reservation logs
 app.get('/api/logs', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('reservation_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(100);
+    let logs = [];
     
-    if (error) throw error;
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('reservation_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      
+      if (error) throw error;
+      logs = data || [];
+    } else {
+      logs = [...inMemoryStorage.reservationLogs]
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(0, 100);
+    }
     
-    res.json(data || []);
+    res.json(logs);
   } catch (error) {
+    addLog(`Error loading logs: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -166,6 +215,7 @@ function startBot() {
   });
   
   botStatus.isRunning = true;
+  botStatus.nextCheck = 'Within 5 minutes';
   addLog('Bot started - checking every 5 minutes for Alice Marble reservations');
 }
 
@@ -185,155 +235,262 @@ async function attemptReservation() {
   
   try {
     // Get credentials
-    const { data: credentials, error } = await supabase
-      .from('user_credentials')
-      .select('*')
-      .single();
+    let credentials = null;
     
-    if (error || !credentials) {
-      throw new Error('No credentials found. Please save your login details first.');
-    }
-    
-    // Launch browser
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-    
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-    
-    // Navigate to SF Rec & Parks tennis reservation page
-    await page.goto('https://sfrecpark.org/1446/Reservable-Tennis-Courts', {
-      waitUntil: 'networkidle2',
-      timeout: 30000
-    });
-    
-    // Look for Alice Marble courts specifically
-    const aliceMarbleFound = await page.evaluate(() => {
-      const text = document.body.innerText.toLowerCase();
-      return text.includes('alice marble');
-    });
-    
-    if (!aliceMarbleFound) {
-      return { success: false, message: 'Alice Marble courts not found on page' };
-    }
-    
-    // Try to find and click reservation links for Alice Marble
-    const reservationLinks = await page.$$eval('a', links => 
-      links.filter(link => 
-        link.href && 
-        (link.href.includes('reservation') || link.href.includes('book')) &&
-        link.textContent.toLowerCase().includes('alice marble')
-      ).map(link => link.href)
-    );
-    
-    if (reservationLinks.length === 0) {
-      // Look for general reservation system link
-      const generalLinks = await page.$$eval('a', links => 
-        links.filter(link => 
-          link.href && 
-          (link.href.includes('reservation') || 
-           link.href.includes('book') ||
-           link.href.includes('tennis'))
-        ).map(link => ({ href: link.href, text: link.textContent }))
-      );
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('user_credentials')
+        .select('*')
+        .single();
       
-      await logReservationAttempt('No direct Alice Marble reservation links found', false, `Found ${generalLinks.length} general links`);
-      return { success: false, message: `No direct reservation links found. Found ${generalLinks.length} general reservation links.` };
-    }
-    
-    // Navigate to first reservation link
-    await page.goto(reservationLinks[0], { waitUntil: 'networkidle2' });
-    
-    // Attempt login if login form is present
-    const loginForm = await page.$('input[type="password"]');
-    if (loginForm) {
-      await page.type('input[type="email"], input[name="username"], input[name="email"]', credentials.username);
-      await page.type('input[type="password"]', credentials.password);
-      
-      const loginButton = await page.$('button[type="submit"], input[type="submit"], button:contains("Login")');
-      if (loginButton) {
-        await loginButton.click();
-        await page.waitForNavigation({ waitUntil: 'networkidle2' });
+      if (error || !data) {
+        throw new Error('No credentials found. Please save your login details first.');
+      }
+      credentials = data;
+    } else {
+      credentials = inMemoryStorage.credentials;
+      if (!credentials) {
+        throw new Error('No credentials found. Please save your login details first.');
       }
     }
     
-    // Look for available Alice Marble courts
-    const availableCourts = await page.evaluate(() => {
-      const courts = [];
-      const elements = document.querySelectorAll('*');
-      
-      elements.forEach(el => {
-        const text = el.textContent;
-        if (text && text.toLowerCase().includes('alice marble') && 
-            (text.toLowerCase().includes('available') || 
-             text.toLowerCase().includes('book') ||
-             text.toLowerCase().includes('reserve'))) {
-          courts.push(text);
-        }
-      });
-      
-      return courts;
+    // Launch browser with better configuration for deployment
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-extensions',
+        '--no-first-run'
+      ]
     });
     
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    
+    // Set longer timeout for slow connections
+    page.setDefaultTimeout(60000);
+    
+    // Navigate to SF Rec & Parks tennis reservation page
+    addLog('Navigating to SF Rec & Parks website...');
+    await page.goto('https://sfrecpark.org/1446/Reservable-Tennis-Courts', {
+      waitUntil: 'networkidle2',
+      timeout: 60000
+    });
+    
+    // Look for Alice Marble courts specifically
+    const pageContent = await page.evaluate(() => {
+      return {
+        hasAliceMarble: document.body.innerText.toLowerCase().includes('alice marble'),
+        title: document.title,
+        bodyText: document.body.innerText.substring(0, 500)
+      };
+    });
+    
+    if (!pageContent.hasAliceMarble) {
+      const result = {
+        success: false,
+        message: 'Alice Marble courts not found on the main page'
+      };
+      await logReservationAttempt(result.message, false, `Page title: ${pageContent.title}`);
+      return result;
+    }
+    
+    addLog('Alice Marble courts found on page, looking for reservation links...');
+    
+    // Look for reservation links
+    const links = await page.evaluate(() => {
+      const allLinks = Array.from(document.querySelectorAll('a'));
+      return allLinks
+        .filter(link => {
+          const href = link.href || '';
+          const text = link.textContent || '';
+          return (
+            href.includes('reservation') ||
+            href.includes('book') ||
+            href.includes('tennis') ||
+            text.toLowerCase().includes('reserve') ||
+            text.toLowerCase().includes('book')
+          );
+        })
+        .map(link => ({
+          href: link.href,
+          text: link.textContent.trim(),
+          hasAliceMarble: link.textContent.toLowerCase().includes('alice marble')
+        }));
+    });
+    
+    if (links.length === 0) {
+      const result = {
+        success: false,
+        message: 'No reservation links found on the page'
+      };
+      await logReservationAttempt(result.message, false, 'No reservation links detected');
+      return result;
+    }
+    
+    addLog(`Found ${links.length} potential reservation links`);
+    
+    // Try to navigate to the first relevant link
+    const primaryLink = links.find(link => link.hasAliceMarble) || links[0];
+    
+    if (primaryLink && primaryLink.href) {
+      addLog(`Attempting to access: ${primaryLink.text}`);
+      await page.goto(primaryLink.href, { waitUntil: 'networkidle2' });
+      
+      // Check if we're on a reservation system
+      const isReservationPage = await page.evaluate(() => {
+        const text = document.body.innerText.toLowerCase();
+        return (
+          text.includes('reserve') ||
+          text.includes('book') ||
+          text.includes('available') ||
+          text.includes('schedule')
+        );
+      });
+      
+      if (isReservationPage) {
+        // Look for login form
+        const hasLoginForm = await page.$('input[type="password"]');
+        if (hasLoginForm) {
+          addLog('Login form detected, attempting to log in...');
+          
+          // Try different username field selectors
+          const usernameSelectors = [
+            'input[type="email"]',
+            'input[name="username"]',
+            'input[name="email"]',
+            'input[name="user"]'
+          ];
+          
+          let usernameField = null;
+          for (const selector of usernameSelectors) {
+            usernameField = await page.$(selector);
+            if (usernameField) break;
+          }
+          
+          if (usernameField) {
+            await page.type(usernameSelectors.find(sel => page.$(sel)), credentials.username);
+            await page.type('input[type="password"]', credentials.password);
+            
+            const loginButton = await page.$('button[type="submit"], input[type="submit"]') ||
+                              await page.$('button:contains("Login")');
+            
+            if (loginButton) {
+              await loginButton.click();
+              await page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {
+                addLog('Login navigation timeout - continuing...');
+              });
+            }
+          }
+        }
+        
+        // Look for Alice Marble court availability
+        const courtInfo = await page.evaluate(() => {
+          const text = document.body.innerText;
+          const courts = [];
+          
+          // Look for text mentioning Alice Marble
+          const lines = text.split('\n');
+          lines.forEach(line => {
+            if (line.toLowerCase().includes('alice marble')) {
+              courts.push(line.trim());
+            }
+          });
+          
+          return {
+            courts,
+            hasAvailable: text.toLowerCase().includes('available'),
+            hasBooking: text.toLowerCase().includes('book') || text.toLowerCase().includes('reserve')
+          };
+        });
+        
+        const result = {
+          success: courtInfo.courts.length > 0 && courtInfo.hasAvailable,
+          message: courtInfo.courts.length > 0 
+            ? `Found Alice Marble court information: ${courtInfo.courts.join(', ')}`
+            : 'No Alice Marble court availability found'
+        };
+        
+        await logReservationAttempt(
+          result.message,
+          result.success,
+          JSON.stringify(courtInfo)
+        );
+        
+        return result;
+      }
+    }
+    
     const result = {
-      success: availableCourts.length > 0,
-      message: availableCourts.length > 0 
-        ? `Found ${availableCourts.length} available Alice Marble courts`
-        : 'No available Alice Marble courts found'
+      success: false,
+      message: `Found ${links.length} links but unable to access reservation system`
     };
     
     await logReservationAttempt(
       result.message,
-      result.success,
-      JSON.stringify(availableCourts)
+      false,
+      JSON.stringify(links.map(l => ({ text: l.text, href: l.href })))
     );
     
     return result;
     
   } catch (error) {
-    await logReservationAttempt(
-      `Reservation attempt failed: ${error.message}`,
-      false,
-      error.stack
-    );
+    const errorMessage = `Reservation attempt failed: ${error.message}`;
+    await logReservationAttempt(errorMessage, false, error.stack);
     throw error;
   } finally {
     if (browser) {
-      await browser.close();
+      await browser.close().catch(console.error);
     }
   }
 }
 
 async function logReservationAttempt(message, success, details = '') {
+  const logEntry = {
+    message,
+    success,
+    details,
+    created_at: new Date().toISOString()
+  };
+  
   try {
-    await supabase
-      .from('reservation_logs')
-      .insert({
-        message,
-        success,
-        details,
-        created_at: new Date().toISOString()
-      });
+    if (supabase) {
+      await supabase
+        .from('reservation_logs')
+        .insert(logEntry);
+    } else {
+      // Add ID for in-memory storage
+      logEntry.id = inMemoryStorage.reservationLogs.length + 1;
+      inMemoryStorage.reservationLogs.push(logEntry);
+      
+      // Keep only last 1000 entries in memory
+      if (inMemoryStorage.reservationLogs.length > 1000) {
+        inMemoryStorage.reservationLogs = inMemoryStorage.reservationLogs.slice(-1000);
+      }
+    }
   } catch (error) {
     console.error('Error logging reservation attempt:', error);
   }
 }
 
-// Initialize database tables
-async function initializeTables() {
-  try {
-    // This would typically be done via Supabase dashboard
-    // The SQL for these tables is provided in the frontend
-    addLog('Server started - database tables should be created via Supabase dashboard');
-  } catch (error) {
-    addLog(`Database initialization error: ${error.message}`);
-  }
-}
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  stopBot();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  stopBot();
+  process.exit(0);
+});
 
 app.listen(PORT, () => {
-  console.log(`SF Tennis Bot running on port ${PORT}`);
-  addLog(`Server started on port ${PORT}`);
-  initializeTables();
+  console.log(`🎾 SF Tennis Bot running on port ${PORT}`);
+  console.log(`📊 Database: ${supabase ? 'Supabase' : 'In-Memory Storage'}`);
+  addLog(`Server started on port ${PORT} with ${supabase ? 'Supabase' : 'in-memory'} storage`);
 });
