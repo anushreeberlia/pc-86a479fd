@@ -236,7 +236,7 @@ async function attemptReservation() {
         success: false,
         message: 'Alice Marble courts not found on the main page'
       };
-      await logReservationAttempt(result.message, false, `Page title: ${pageContent.title}`);
+      logReservationAttempt(result.message, false, `Page title: ${pageContent.title}`);
       return result;
     }
     
@@ -269,7 +269,7 @@ async function attemptReservation() {
         success: false,
         message: 'No reservation links found on the page'
       };
-      await logReservationAttempt(result.message, false, 'No reservation links detected');
+      logReservationAttempt(result.message, false, 'No reservation links detected');
       return result;
     }
     
@@ -358,7 +358,7 @@ async function attemptReservation() {
             : 'No Alice Marble court availability found'
         };
         
-        await logReservationAttempt(
+        logReservationAttempt(
           result.message,
           result.success,
           JSON.stringify(courtInfo)
@@ -373,7 +373,7 @@ async function attemptReservation() {
       message: `Found ${links.length} links but unable to access reservation system`
     };
     
-    await logReservationAttempt(
+    logReservationAttempt(
       result.message,
       false,
       JSON.stringify(links.map(l => ({ text: l.text, href: l.href })))
@@ -383,7 +383,7 @@ async function attemptReservation() {
     
   } catch (error) {
     const errorMessage = `Reservation attempt failed: ${error.message}`;
-    await logReservationAttempt(errorMessage, false, error.stack);
+    logReservationAttempt(errorMessage, false, error.stack);
     throw error;
   } finally {
     if (browser) {
@@ -392,7 +392,7 @@ async function attemptReservation() {
   }
 }
 
-async function logReservationAttempt(message, success, details = '') {
+function logReservationAttempt(message, success, details = '') {
   const logEntry = {
     id: storage.reservationLogs.length + 1,
     message,
