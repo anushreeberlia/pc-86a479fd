@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SF Tennis Court Reservation Bot</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎾 SF Tennis Bot</h1>
+            <p>Automated reservation system for Alice Marble Tennis Courts</p>
+        </header>
+
+        <div class="grid">
+            <!-- Credentials Section -->
+            <div class="card">
+                <h2>🔐 Login Credentials</h2>
+                <div id="credentialsForm">
+                    <input type="text" id="username" placeholder="Username/Email" required>
+                    <input type="password" id="password" placeholder="Password" required>
+                    <button onclick="saveCredentials()">Save Credentials</button>
+                </div>
+                <div id="credentialsStatus" class="status"></div>
+            </div>
+
+            <!-- Bot Control Section -->
+            <div class="card">
+                <h2>🤖 Bot Control</h2>
+                <div class="bot-status" id="botStatus">
+                    <div class="status-indicator" id="statusIndicator"></div>
+                    <span id="statusText">Loading...</span>
+                </div>
+                <div class="bot-controls">
+                    <button id="startBtn" onclick="startBot()" class="btn-success">Start Bot</button>
+                    <button id="stopBtn" onclick="stopBot()" class="btn-danger">Stop Bot</button>
+                    <button onclick="manualReservation()" class="btn-primary">Try Now</button>
+                </div>
+                <div class="bot-info">
+                    <div>Last Check: <span id="lastCheck">Never</span></div>
+                    <div>Next Check: <span id="nextCheck">Not scheduled</span></div>
+                </div>
+            </div>
+
+            <!-- Live Logs Section -->
+            <div class="card full-width">
+                <h2>📋 Live Activity Log</h2>
+                <div class="logs-container" id="liveLogs">
+                    <div class="log-entry">Initializing...</div>
+                </div>
+                <button onclick="clearLogs()" class="btn-secondary">Clear Logs</button>
+            </div>
+
+            <!-- Reservation History -->
+            <div class="card full-width">
+                <h2>📊 Reservation History</h2>
+                <div class="history-container" id="reservationHistory">
+                    Loading history...
+                </div>
+                <button onclick="refreshHistory()" class="btn-secondary">Refresh</button>
+            </div>
+        </div>
+
+        <!-- Setup Instructions -->
+        <div class="card setup-instructions">
+            <h2>⚙️ Setup Instructions</h2>
+            <ol>
+                <li><strong>Database Setup:</strong> Create the following tables in your Supabase dashboard:
+                    <details>
+                        <summary>Click to view SQL commands</summary>
+                        <pre><code>-- User credentials table
+CREATE TABLE user_credentials (
+    id INTEGER PRIMARY KEY,
+    username TEXT NOT NULL,
+    password TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Reservation logs table
+CREATE TABLE reservation_logs (
+    id SERIAL PRIMARY KEY,
+    message TEXT NOT NULL,
+    success BOOLEAN DEFAULT FALSE,
+    details TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);</code></pre>
+                    </details>
+                </li>
+                <li><strong>Environment Variables:</strong> Set SUPABASE_URL and SUPABASE_ANON_KEY in your .env file</li>
+                <li><strong>Credentials:</strong> Enter your SF Rec & Parks account credentials above</li>
+                <li><strong>Start Bot:</strong> Click "Start Bot" to begin monitoring for Alice Marble court availability</li>
+            </ol>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
